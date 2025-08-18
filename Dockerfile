@@ -1,5 +1,5 @@
 # Dockerfile
-FROM 3.13.7-alpine3.22
+FROM alpine:.7-alpine3.22
 
 # Core + “extras”-style modules you likely want
 RUN apk add --no-cache \
