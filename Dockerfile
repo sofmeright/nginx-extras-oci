@@ -11,10 +11,11 @@ LABEL maintainer="SoFMeRight <sofmeright@gmail.com>" \
 # Core + dynamic modules we want available
 RUN apk add --no-cache \
       nginx ca-certificates curl tzdata openssl \
-      nginx-mod-http-headers-more \
       nginx-mod-http-brotli \
+      nginx-mod-http-echo \
       nginx-mod-http-geoip2 \
-      nginx-mod-http-echo
+      nginx-mod-http-grpc \
+      nginx-mod-http-headers-more
 
 # Directories we use at runtime
 RUN mkdir -p /etc/nginx/modules.d /etc/nginx/_internal /etc/nginx/cf /etc/nginx/ssl
