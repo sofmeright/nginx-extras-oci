@@ -1,0 +1,85 @@
+version: "3.9"
+
+services:
+  nginx:
+    image: prplanit/nginx-extras-oci:latest
+    container_name: nginx-extras
+    dns:
+      - 10.0.0.1
+      - 10.0.0.2
+    dns_search:
+      - prplanit.internal
+    restart: always
+    # You bind the ports you want; uncomment if you want 80/443 on host:
+    ports:
+      - "80:80"
+      - "443:443"
+    # user: "101:101"                 # run as nginx user (Alpine uid/gid 101) instead of root
+    # cap_drop: ["ALL"]
+    # cap_add: ["NET_BIND_SERVICE"]   # only capability needed for :80/:443
+    security_opt:
+      - no-new-privileges:true
+    # read_only: true
+    tmpfs:
+      # - /var/run/nginx:rw,noexec,nosuid,nodev,size=16m
+      - /var/cache/nginx:rw,noexec,nosuid,nodev,size=64m
+    environment:
+      TZ: "America/Los_Angeles"
+    volumes:
+      # your main nginx config & virtual hosts
+      - /opt/docker/nginx-extras/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /opt/docker/nginx-extras/snippets:/etc/nginx/snippets:ro
+      # persisted TLS params (dhparam.pem lives here)
+      - /opt/docker/nginx-extras/ssl:/etc/nginx/ssl
+      # logs to files (we also mirror to stdout/stderr for Loki)
+      - /opt/docker/nginx-extras/logs:/var/log/nginx
+      # full Let's Encrypt tree persisted to host (live/ archive/ renewal/)
+      - /opt/docker/nginx-extras/letsencrypt:/etc/letsencrypt
+      # share nginx pid with certbot for SIGHUP on renew
+      - /var/run/nginx:/var/run/nginx
+
+      - /etc/nginx/dhparam.pem:/etc/nginx/dhparam.pem
+      - /etc/nginx/cloudflare:/etc/nginx/cloudflare
+      - /mnt/timecapsule/Server/Web-App/NGINX:/mnt/timecapsule/Server/Web-App/NGINX
+      - /mnt/app_data/Server/HTML:/mnt/app_data/Server/HTML
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # logging:
+      # driver: loki
+      # options:
+        # loki-url: "http://monitoring:3100/loki/api/v1/push"
+        # loki-retries: "2"
+        # loki-batch-size: "400"
+        # loki-timeout: "1s"
+        # loki-max-backoff: "800ms"
+        # loki-external-labels: "service=nginx-extras,stack=nginx"
+
+  certbot:
+    image: certbot/dns-cloudflare:latest
+    container_name: certbot
+    restart: always
+
+    # EITHER share PID ns and HUP nginx PID 1 (see note #2 below)...
+    pid: "service:nginx"
+
+    volumes:
+      - /opt/docker/nginx-extras/letsencrypt:/etc/letsencrypt
+      - /opt/docker/nginx-extras/secrets/dns_cloudflare_api_token.ini:/secrets/dns_cloudflare_api_token.ini:ro
+
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while :; do
+          certbot renew \
+            --dns-cloudflare \
+            --dns-cloudflare-credentials /secrets/dns_cloudflare_api_token.ini \
+            --preferred-challenges dns \
+            --non-interactive --agree-tos \
+            --deploy-hook 'kill -HUP 1' ;
+          sleep 12h
+        done
