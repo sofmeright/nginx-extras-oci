@@ -1,31 +1,48 @@
 #!/bin/sh
-set -e
+set -eu
 
-# --- Refresh Cloudflare IP ranges (best effort) ---
-mkdir -p /etc/nginx/cf
-CF=/etc/nginx/cf/ips.conf
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-curl -fsSL https://www.cloudflare.com/ips-v4 > "$tmp/ips-v4" || true
-curl -fsSL https://www.cloudflare.com/ips-v6 > "$tmp/ips-v6" || true
-{
-  echo "# generated $(date -u +%FT%TZ)"
-  [ -s "$tmp/ips-v4" ] && awk '{print "set_real_ip_from " $1 ";"}' "$tmp/ips-v4"
-  [ -s "$tmp/ips-v6" ] && awk '{print "set_real_ip_from " $1 ";"}' "$tmp/ips-v6"
-  echo "real_ip_header CF-Connecting-IP;"
-} > "$CF"
+CF_DIR="/etc/nginx/cf"
+SSL_DIR="/etc/nginx/ssl"
+DHPARAM="${SSL_DIR}/dhparam.pem"
+DHPARAM_BITS="${DHPARAM_BITS:-4096}"
+CF_REFRESH="${CF_REFRESH:-true}"   # set CF_REFRESH=false to skip
+CF_TIMEOUT="${CF_TIMEOUT:-5}"
 
-# --- Ensure strong DH params (4096-bit) ---
-DH=/etc/nginx/ssl/dhparam.pem
-if [ ! -s "$DH" ]; then
-  echo "Generating 4096-bit dhparam at $DH (this can take a while) ..."
-  openssl dhparam -out "$DH" 4096
-fi
-# Validate bit size is >= 4096
-if ! openssl dhparam -in "$DH" -text -noout 2>/dev/null | grep -q "DH Parameters: (4096 bit)"; then
-  echo "Existing dhparam is not 4096-bit; regenerating..."
-  openssl dhparam -out "$DH" 4096
-fi
-chmod 0644 "$DH"
+mkdir -p /var/run/nginx /var/cache/nginx /var/log/nginx
 
+refresh_cf_ips() {
+  [ "$CF_REFRESH" = "true" ] || return 0
+  # Try to refresh; if it fails, keep any existing files
+  curl -fsS --max-time "$CF_TIMEOUT" https://www.cloudflare.com/ips-v4 > "${CF_DIR}/ips-v4" || true
+  curl -fsS --max-time "$CF_TIMEOUT" https://www.cloudflare.com/ips-v6 > "${CF_DIR}/ips-v6" || true
+
+  {
+    echo "# generated $(date -u +%FT%TZ)"
+    if [ -f "${CF_DIR}/ips-v4" ]; then
+      while read -r n; do [ -n "$n" ] && echo "set_real_ip_from $n;"; done < "${CF_DIR}/ips-v4"
+    fi
+    if [ -f "${CF_DIR}/ips-v6" ]; then
+      while read -r n; do [ -n "$n" ] && echo "set_real_ip_from $n;"; done < "${CF_DIR}/ips-v6"
+    fi
+    echo "real_ip_header CF-Connecting-IP;"
+  } > "${CF_DIR}/ips.conf"
+}
+
+ensure_dhparam() {
+  if [ ! -s "$DHPARAM" ]; then
+    echo "Generating DH parameters (${DHPARAM_BITS} bits)..." >&2
+    tmp="${DHPARAM}.tmp"
+    openssl dhparam -out "$tmp" "$DHPARAM_BITS"
+    mv -f "$tmp" "$DHPARAM"
+    chmod 0600 "$DHPARAM"
+  fi
+}
+
+refresh_cf_ips || true
+ensure_dhparam || true
+
+# Validate config before launch
+nginx -t
+
+# Hand off to nginx as PID 1
 exec "$@"
