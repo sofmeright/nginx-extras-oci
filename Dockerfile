@@ -14,7 +14,6 @@ RUN apk add --no-cache \
       nginx-mod-http-brotli \
       nginx-mod-http-echo \
       nginx-mod-http-geoip2 \
-      nginx-mod-http-grpc \
       nginx-mod-http-headers-more
 
 # Directories we use at runtime
