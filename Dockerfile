@@ -1,7 +1,14 @@
-# Dockerfile
+# syntax=docker/dockerfile:1.7
 FROM alpine:3.22.1
 
-# nginx + useful dynamic modules + openssl for dhparam
+LABEL maintainer="SoFMeRight <sofmeright@gmail.com>" \
+      org.opencontainers.image.title="nginx-extras-oci" \
+      description="NGINX with extras, alpine base, with a default nginx.conf & healthcheck endpoint." \
+      org.opencontainers.image.description="NGINX with extras, alpine base, with a default nginx.conf & healthcheck endpoint." \
+      org.opencontainers.image.source="https://gitlab.prplanit.com/precisionplanit/nginx-extras-oci.git" \
+      org.opencontainers.image.licenses="GPL-3.0"
+
+# Core + dynamic modules we want available
 RUN apk add --no-cache \
       nginx ca-certificates curl tzdata openssl \
       nginx-mod-http-headers-more \
@@ -9,25 +16,32 @@ RUN apk add --no-cache \
       nginx-mod-http-geoip2 \
       nginx-mod-http-echo
 
-# Alpine includes /etc/nginx/http.d; symlink your conf.d into it
-RUN ln -s /etc/nginx/http.d /etc/nginx/conf.d
+# Directories we use at runtime
+RUN mkdir -p /etc/nginx/modules.d /etc/nginx/_internal /etc/nginx/cf /etc/nginx/ssl
 
-# Enable dynamic modules (load at runtime)
-RUN mkdir -p /etc/nginx/modules.d && \
-    printf "load_module /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so;\n" > /etc/nginx/modules.d/headers_more.conf && \
-    printf "load_module /usr/lib/nginx/modules/ngx_http_brotli_filter_module.so;\nload_module /usr/lib/nginx/modules/ngx_http_brotli_static_module.so;\n" > /etc/nginx/modules.d/brotli.conf
+# Load dynamic modules at startup (keep one file per module for clarity)
+RUN printf 'load_module /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so;\n' \
+      > /etc/nginx/modules.d/10-headers_more.conf \
+ && printf 'load_module /usr/lib/nginx/modules/ngx_http_brotli_filter_module.so;\nload_module /usr/lib/nginx/modules/ngx_http_brotli_static_module.so;\n' \
+      > /etc/nginx/modules.d/20-brotli.conf
 
-# CF real IPs live here; dhparam & other TLS bits in /etc/nginx/ssl
-RUN mkdir -p /etc/nginx/cf /etc/nginx/ssl
+# Bake a private health endpoint (not in conf.d, not exposed publicly)
+RUN printf 'server {\n  listen 127.0.0.1:8080;\n  server_name _;\n  access_log off;\n  location = /healthz { add_header Content-Type text/plain; return 200 \"ok\"; }\n}\n' \
+      > /etc/nginx/_internal/10-healthz.conf
 
-# One entrypoint that:
-#  - refreshes Cloudflare IP ranges (real client IPs)
-#  - ensures /etc/nginx/ssl/dhparam.pem exists, 4096-bit (generates if missing)
-#  - starts nginx in foreground
+# Bake our nginx.conf (ships with sane defaults; site vhosts live in /etc/nginx/conf.d)
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Entrypoint:
+#  - refresh Cloudflare real-IP ranges into /etc/nginx/cf/ips.conf
+#  - ensure /etc/nginx/ssl/dhparam.pem exists (4096-bit by default)
+#  - test config, then exec nginx in foreground
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Expose ports; stop politely
 EXPOSE 80 443
 STOPSIGNAL SIGQUIT
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
