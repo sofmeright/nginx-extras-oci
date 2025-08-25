@@ -68,17 +68,8 @@ services:
     # cap_drop: ["ALL"]
     # cap_add: ["NET_BIND_SERVICE"]   # only capability needed for :80/:443
     container_name: nginx-extras-oci
-    # dns:
-      # - 127.0.0.11      # Docker’s embedded DNS (for container names)
-      # - 10.0.0.1
-      # - 10.0.0.2
-    # dns_search:
-      # - prplanit.internal
     environment:
       TZ: "America/Los_Angeles"
-    #extra_hosts:
-      #- "moor.prplanit.internal:10.30.1.123"
-      #- "bw.prplanit.com:71.24.190.217"
     image: prplanit/nginx-extras-oci:latest
     labels:
       - "ap.mon.hostname=cell-membrane"
@@ -101,23 +92,28 @@ services:
       # - /var/run/nginx:rw,noexec,nosuid,nodev,size=16m
       - /var/cache/nginx:rw,noexec,nosuid,nodev,size=64m
     volumes:
-      # your main nginx config & virtual hosts
-      - /opt/docker/nginx-extras/nginx.conf:/etc/nginx/nginx.conf:ro
+      # NGINX configs & virtual hosts
+      # You can override the default nginx.conf:
+      # - /opt/docker/nginx-extras/nginx.conf:/etc/nginx/nginx.conf:ro
+      # I plan to move conf.d from the vanilla location, here nginx conf.d is mapped as my CI tasks currently expect.
       - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
       - /opt/docker/nginx-extras/snippets:/etc/nginx/snippets:ro
       # persisted TLS params (dhparam.pem lives here)
       - /opt/docker/nginx-extras/ssl:/etc/nginx/ssl
-      # logs to files (we also mirror to stdout/stderr for Loki)
-      - /opt/docker/nginx-extras/logs:/var/log/nginx
+      # Passthru existing dhparam.pem for existing configs.
+      - /etc/nginx/dhparam.pem:/etc/nginx/dhparam.pem
       # full Let's Encrypt tree persisted to host (live/ archive/ renewal/)
       - /opt/docker/nginx-extras/letsencrypt:/etc/letsencrypt
+      # logs to files (we also mirror to stdout/stderr for Loki)
+      - /opt/docker/nginx-extras/logs:/var/log/nginx
+      # DNS Config: Passthru systemd resolv.conf to mirror host DNS.
+      - /run/systemd/resolve/resolv.conf:/etc/resolv.conf:ro   
       # share nginx pid with certbot for SIGHUP on renew
       - /var/run/nginx:/var/run/nginx
-
-      - /etc/nginx/dhparam.pem:/etc/nginx/dhparam.pem
+      # Contains a list of cloudflare ips, I am deprecating this static list soon.
       - /etc/nginx/cloudflare:/etc/nginx/cloudflare
+      # HTML ASSETS; i.e. html, css, error pages, images, etc.
       - /mnt/timecapsule/Server/Web-App/NGINX:/mnt/timecapsule/Server/Web-App/NGINX
-      - /run/systemd/resolve/resolv.conf:/etc/resolv.conf:ro    # <— use host DNS
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
       interval: 30s
