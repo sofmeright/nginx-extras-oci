@@ -1,30 +1,105 @@
+# This is a custom implementation of a nginx "stack" used for exposing docker deployments.
+#
+# We use nginx+extras and certbot to manage our stacks from here forth.
+# Traefik is capable, but I am familiar with nginx. Till k8s, nginx...
+#
+# nginx-extras-oci ?
+# - A minimal and self-contained docker image for nginx w/ extras. 
+# - An IaC friendly alpine based build of nginx.
+#
+# DockerHub: https://hub.docker.com/r/prplanit/nginx-extras-oci
+# GitLab: https://gitlab.prplanit.com/precisionplanit/nginx-extras-oci
+# Docker Pulls: `prplanit/nginx-extras-oci:latest`
+# 
+# © 2025 ~ AntParade / HomelabHelpDesk / PrecisionPlanIT / SoFMeRight
+# Pemission to *use* is granted and optional as well are thank you(s).
+
+---
+
 version: "3.9"
 
+x-logging: &loki
+  driver: loki
+  options:
+    labels: "ap.mon.hostname,ap.mon.srvcname"
+    loki-external-labels: "ap_mon_jobsname=docker"
+    loki-url: "http://monitoring:3100/loki/api/v1/push"
+    loki-retries: "2"
+    loki-batch-size: "400"
+    loki-timeout: "1s"
+    loki-max-backoff: "800ms"
+    mode: "non-blocking"
+
 services:
-  nginx:
-    image: prplanit/nginx-extras-oci:latest
-    container_name: nginx-extras
-    dns:
-      - 10.0.0.1
-      - 10.0.0.2
-    dns_search:
-      - prplanit.internal
+
+  certbot:
+    container_name: certbot
+    #depends_on:
+      #nginx-extras-oci:
+        #condition: service_healthy
+        #restart: true
+    image: certbot/dns-cloudflare:latest
+    labels:
+      - "ap.mon.hostname=cell-membrane"
+      - "ap.mon.srvcname=certbot"
+    logging:
+      <<: *loki
+    # EITHER share PID ns and HUP nginx PID 1 (see note #2 below)...
+    pid: "service:nginx-extras-oci"
     restart: always
-    # You bind the ports you want; uncomment if you want 80/443 on host:
-    ports:
-      - "80:80"
-      - "443:443"
-    # user: "101:101"                 # run as nginx user (Alpine uid/gid 101) instead of root
+    volumes:
+      - /opt/docker/nginx-extras/letsencrypt:/etc/letsencrypt
+      - /opt/docker/nginx-extras/secrets/dns_cloudflare_api_token.ini:/secrets/dns_cloudflare_api_token.ini:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        while :; do
+          certbot renew \
+            --dns-cloudflare \
+            --dns-cloudflare-credentials /secrets/dns_cloudflare_api_token.ini \
+            --preferred-challenges dns \
+            --non-interactive --agree-tos \
+            --deploy-hook 'kill -HUP 1' ;
+          sleep 12h
+        done
+
+  nginx-extras-oci:
     # cap_drop: ["ALL"]
     # cap_add: ["NET_BIND_SERVICE"]   # only capability needed for :80/:443
+    container_name: nginx-extras-oci
+    # dns:
+      # - 127.0.0.11      # Docker’s embedded DNS (for container names)
+      # - 10.0.0.1
+      # - 10.0.0.2
+    # dns_search:
+      # - prplanit.internal
+    environment:
+      TZ: "America/Los_Angeles"
+    #extra_hosts:
+      #- "moor.prplanit.internal:10.30.1.123"
+      #- "bw.prplanit.com:71.24.190.217"
+    image: prplanit/nginx-extras-oci:latest
+    labels:
+      - "ap.mon.hostname=cell-membrane"
+      - "ap.mon.srvcname=nginx"
+    logging:
+      <<: *loki
+    # network_mode: host
+    # You bind the ports you want; uncomment if you want 80/443 on host:
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "[::]:80:80"
+      - "[::]:443:443"
+    # read_only: true
+    restart: always
     security_opt:
       - no-new-privileges:true
-    # read_only: true
+    # user: "101:101"                 # run as nginx user (Alpine uid/gid 101) instead of root
     tmpfs:
       # - /var/run/nginx:rw,noexec,nosuid,nodev,size=16m
       - /var/cache/nginx:rw,noexec,nosuid,nodev,size=64m
-    environment:
-      TZ: "America/Los_Angeles"
     volumes:
       # your main nginx config & virtual hosts
       - /opt/docker/nginx-extras/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -42,44 +117,9 @@ services:
       - /etc/nginx/dhparam.pem:/etc/nginx/dhparam.pem
       - /etc/nginx/cloudflare:/etc/nginx/cloudflare
       - /mnt/timecapsule/Server/Web-App/NGINX:/mnt/timecapsule/Server/Web-App/NGINX
-      - /mnt/app_data/Server/HTML:/mnt/app_data/Server/HTML
+      - /run/systemd/resolve/resolv.conf:/etc/resolv.conf:ro    # <— use host DNS
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
-    # logging:
-      # driver: loki
-      # options:
-        # loki-url: "http://monitoring:3100/loki/api/v1/push"
-        # loki-retries: "2"
-        # loki-batch-size: "400"
-        # loki-timeout: "1s"
-        # loki-max-backoff: "800ms"
-        # loki-external-labels: "service=nginx-extras,stack=nginx"
-
-  certbot:
-    image: certbot/dns-cloudflare:latest
-    container_name: certbot
-    restart: always
-
-    # EITHER share PID ns and HUP nginx PID 1 (see note #2 below)...
-    pid: "service:nginx"
-
-    volumes:
-      - /opt/docker/nginx-extras/letsencrypt:/etc/letsencrypt
-      - /opt/docker/nginx-extras/secrets/dns_cloudflare_api_token.ini:/secrets/dns_cloudflare_api_token.ini:ro
-
-    entrypoint:
-      - sh
-      - -c
-      - |
-        while :; do
-          certbot renew \
-            --dns-cloudflare \
-            --dns-cloudflare-credentials /secrets/dns_cloudflare_api_token.ini \
-            --preferred-challenges dns \
-            --non-interactive --agree-tos \
-            --deploy-hook 'kill -HUP 1' ;
-          sleep 12h
-        done
