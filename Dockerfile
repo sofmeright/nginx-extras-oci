@@ -43,5 +43,9 @@ RUN chmod +x /entrypoint.sh
 EXPOSE 80 443
 STOPSIGNAL SIGQUIT
 
+# Inline healthcheck (allowing extra startup time for DH param/gen etc.)
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=120s \
+  CMD sh -c 'curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1'
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
