@@ -13,11 +13,16 @@ include:
       freight_docker_user_1: "${DOCKER_HUB_USERNAME}"
       freight_docker_pass_1: "${DOCKER_HUB_PASSWORD}"
       freight_docker_path_1: "prplanit/$CI_PROJECT_NAME"
-      freight_docker_registry_1: "docker"
+      freight_docker_registry_1: "quay"
+      freight_docker_url_2: "cr.pcfae.com"
+      freight_docker_user_2: "${QUAY_USERNAME}"
+      freight_docker_pass_2: "${QUAY_PASSWORD}"
+      freight_docker_path_2: "prplanit/$CI_PROJECT_NAME"
   - project: 'components/stagefreight'
     file: '/export-dependencies.yml'
     ref: main
         
 stages:
   - build
+  - security
   - release
