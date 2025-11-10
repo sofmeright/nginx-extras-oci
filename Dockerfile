@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM alpine:3.22.1
+FROM alpine:3.22.2
 
 LABEL maintainer="SoFMeRight <sofmeright@gmail.com>" \
       org.opencontainers.image.title="nginx-extras-oci" \
